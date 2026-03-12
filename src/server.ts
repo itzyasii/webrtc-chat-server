@@ -13,6 +13,15 @@ async function main() {
 
   initSockets(server);
 
+  server.on("error", (err: any) => {
+    if (err?.code === "EADDRINUSE") {
+      logger.error(`Port ${env.PORT} is already in use.`);
+    } else {
+      logger.error(err);
+    }
+    process.exit(1);
+  });
+
   server.listen(env.PORT, () => {
     logger.info(`HTTP server listening on :${env.PORT}`);
   });

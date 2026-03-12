@@ -7,6 +7,7 @@ import { BlockModel } from "../models/Block";
 import { ChatModel } from "../models/Chat";
 import { MessageModel } from "../models/Message";
 import { UserModel } from "../models/User";
+import { broadcastToUsers } from "../sockets/chatBroadcast";
 
 export const chatsRouter = Router();
 
@@ -203,6 +204,46 @@ chatsRouter.post(
       { $set: { updatedAt: new Date() } },
     ).exec();
 
+    const members = chat.members.map(String);
+    const payload =
+      message.type === "text"
+        ? {
+            ok: true,
+            chatId: String(chat._id),
+            message: {
+              id: String(message._id),
+              chatId: String(message.chatId),
+              from: String(message.from),
+              type: "text" as const,
+              clientMessageId: message.clientMessageId ?? null,
+              text: message.text ?? null,
+              item: null,
+              receipts: message.receipts ?? [],
+              editedAt: message.editedAt ?? null,
+              deletedAt: message.deletedAt ?? null,
+              createdAt: message.createdAt,
+            },
+          }
+        : {
+            ok: true,
+            chatId: String(chat._id),
+            message: {
+              id: String(message._id),
+              chatId: String(message.chatId),
+              from: String(message.from),
+              type: "share" as const,
+              clientMessageId: message.clientMessageId ?? null,
+              text: null,
+              item: message.item ?? null,
+              receipts: message.receipts ?? [],
+              editedAt: message.editedAt ?? null,
+              deletedAt: message.deletedAt ?? null,
+              createdAt: message.createdAt,
+            },
+          };
+
+    broadcastToUsers(members, message.type === "text" ? "chat:message" : "share:item", payload);
+
     res.status(201).json({
       ok: true,
       message: {
@@ -244,6 +285,30 @@ chatsRouter.patch(
       { $set: { text: (req.body as any).text, editedAt: new Date() } },
     ).exec();
 
+    const chat = await ChatModel.findOne({ _id: chatId, members: req.user!.id }).select("members").lean();
+    if (chat) {
+      const updated = await MessageModel.findById(messageId).lean();
+      if (updated) {
+        broadcastToUsers(chat.members.map(String), "chat:message:edited", {
+          ok: true,
+          chatId: String(chat._id),
+          message: {
+            id: String(updated._id),
+            chatId: String(updated.chatId),
+            from: String(updated.from),
+            type: updated.type,
+            clientMessageId: updated.clientMessageId ?? null,
+            text: updated.deletedAt ? null : updated.text ?? null,
+            item: updated.deletedAt ? null : updated.item ?? null,
+            receipts: updated.receipts ?? [],
+            editedAt: updated.editedAt ?? null,
+            deletedAt: updated.deletedAt ?? null,
+            createdAt: updated.createdAt,
+          },
+        });
+      }
+    }
+
     res.json({ ok: true });
   },
 );
@@ -263,6 +328,17 @@ chatsRouter.delete("/chats/:chatId/messages/:messageId", requireAuth, async (req
     { _id: messageId },
     { $set: { deletedAt: new Date() }, $unset: { text: 1, item: 1 } },
   ).exec();
+
+  const chat = await ChatModel.findOne({ _id: chatId, members: req.user!.id }).select("members").lean();
+  if (chat) {
+    broadcastToUsers(chat.members.map(String), "chat:message:deleted", {
+      ok: true,
+      chatId: String(chat._id),
+      messageId,
+      by: req.user!.id,
+      at: new Date().toISOString(),
+    });
+  }
 
   res.json({ ok: true });
 });

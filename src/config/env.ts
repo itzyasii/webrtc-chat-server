@@ -23,6 +23,7 @@ const EnvSchema = z.object({
   TURN_URLS: z.string().optional(),
   TURN_USERNAME: z.string().optional(),
   TURN_CREDENTIAL: z.string().optional(),
+  CALL_RING_TIMEOUT_SECONDS: z.coerce.number().int().positive().default(30),
 });
 
 export const env = EnvSchema.parse(process.env);

@@ -37,10 +37,16 @@ Real-time chat events:
 - `chat:delivered` `{ messageIds: string[] }`
 - `chat:read` `{ messageIds: string[] }`
 - `chat:receipt` (server -> sender) `{ type: "delivered"|"read", messageIds, userId, chatId, at }`
+- `chat:message:edited` (server -> chat members) `{ chatId, message }`
+- `chat:message:deleted` (server -> chat members) `{ chatId, messageId, by, at }`
 
 Call notifications:
 
 - `call:missed` (server -> callee) `{ callId, from, at }`
+
+Server-side missed call detection:
+
+- If a call stays in `ringing` for `CALL_RING_TIMEOUT_SECONDS`, the server marks it as `missed` and emits `call:missed` + `call:end`.
 
 Presence events:
 

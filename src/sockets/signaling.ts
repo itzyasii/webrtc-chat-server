@@ -8,6 +8,7 @@ import { MessageModel } from "../models/Message";
 import { UserModel } from "../models/User";
 import { BlockModel } from "../models/Block";
 import { CallLogModel } from "../models/CallLog";
+import { env } from "../config/env";
 
 const ObjectIdString = z.string().regex(/^[a-fA-F0-9]{24}$/);
 
@@ -96,6 +97,58 @@ async function getOrCreateDmChat(userA: string, userB: string) {
   return created.toObject();
 }
 
+const ringTimers = new Map<string, NodeJS.Timeout>();
+
+function clearRingTimer(callId: string) {
+  const t = ringTimers.get(callId);
+  if (t) clearTimeout(t);
+  ringTimers.delete(callId);
+}
+
+function scheduleMissedCall(io: Server, callId: string, callerId: string, calleeId: string) {
+  clearRingTimer(callId);
+
+  const timeoutMs = env.CALL_RING_TIMEOUT_SECONDS * 1000;
+  const t = setTimeout(async () => {
+    try {
+      const now = new Date();
+
+      const updated = await CallLogModel.findOneAndUpdate(
+        { callId, status: "ringing", answeredAt: { $exists: false }, endedAt: { $exists: false } },
+        { $set: { status: "missed", endedAt: now, reason: "timeout" } },
+        { new: true },
+      ).lean();
+
+      if (!updated) return;
+
+      emitToUser(io, calleeId, "call:missed", {
+        ok: true,
+        callId,
+        from: callerId,
+        at: now.toISOString(),
+      });
+
+      emitToUser(io, callerId, "call:end", {
+        ok: true,
+        to: calleeId,
+        callId,
+        reason: "timeout",
+      });
+
+      emitToUser(io, calleeId, "call:end", {
+        ok: true,
+        to: callerId,
+        callId,
+        reason: "timeout",
+      });
+    } finally {
+      clearRingTimer(callId);
+    }
+  }, timeoutMs);
+
+  ringTimers.set(callId, t);
+}
+
 export function registerSignalingHandlers(io: Server, socket: Socket, userId: string) {
   socket.on(
     "presence:list",
@@ -135,6 +188,7 @@ export function registerSignalingHandlers(io: Server, socket: Socket, userId: st
         offer: parsed.data.offer,
       });
 
+      scheduleMissedCall(io, callId, userId, parsed.data.to);
       ack?.({ ok, callId });
     },
   );
@@ -145,6 +199,7 @@ export function registerSignalingHandlers(io: Server, socket: Socket, userId: st
       const parsed = CallAnswerSchema.safeParse(data);
       if (!parsed.success) return ack?.({ ok: false });
 
+      clearRingTimer(parsed.data.callId);
       await CallLogModel.updateOne(
         { callId: parsed.data.callId },
         { $set: { status: "answered", answeredAt: new Date() } },
@@ -177,6 +232,7 @@ export function registerSignalingHandlers(io: Server, socket: Socket, userId: st
       const parsed = CallEndSchema.safeParse(data);
       if (!parsed.success) return ack?.({ ok: false });
 
+      clearRingTimer(parsed.data.callId);
       const existing = await CallLogModel.findOne({
         callId: parsed.data.callId,
       }).lean();

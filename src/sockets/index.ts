@@ -8,6 +8,7 @@ import { registerSignalingHandlers } from "./signaling";
 import { registerChatRealtimeHandlers } from "./chatRealtime";
 import { addSocketForUser, listOnlineUsers, removeSocket } from "./store";
 import { UserModel } from "../models/User";
+import { setIo } from "./runtime";
 
 const UserIdSchema = z.string().min(1);
 
@@ -20,6 +21,8 @@ export function initSockets(httpServer: HttpServer) {
             origin: corsOriginList,
           },
   });
+
+  setIo(io);
 
   io.use((socket, next) => {
     const token = socket.handshake.auth?.accessToken;
