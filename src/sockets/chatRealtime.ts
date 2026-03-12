@@ -17,6 +17,11 @@ const ReceiptSchema = z.object({
   messageIds: z.array(ObjectIdString).min(1).max(200),
 });
 
+const ReactionSchema = z.object({
+  messageId: ObjectIdString,
+  emoji: z.string().min(1).max(16),
+});
+
 export function registerChatRealtimeHandlers(
   io: Server,
   socket: Socket,
@@ -152,6 +157,60 @@ export function registerChatRealtimeHandlers(
         }
 
         ack?.({ ok: true });
+      } catch {
+        ack?.({ ok: false });
+      }
+    },
+  );
+
+  socket.on(
+    "chat:react",
+    async (
+      data: unknown,
+      ack?: (res: { ok: boolean; action?: "added" | "removed" }) => void,
+    ) => {
+      try {
+        const parsed = ReactionSchema.parse(data);
+        const uid = new mongoose.Types.ObjectId(userId);
+        const mid = new mongoose.Types.ObjectId(parsed.messageId);
+        const now = new Date();
+
+        const msg = await MessageModel.findById(mid).select("chatId").lean();
+        if (!msg) return ack?.({ ok: false });
+
+        const chat = await ChatModel.findOne({ _id: msg.chatId, members: userId })
+          .select("members")
+          .lean();
+        if (!chat || chat.members.length !== 2) return ack?.({ ok: false });
+
+        const pullRes = await MessageModel.updateOne(
+          { _id: mid },
+          { $pull: { reactions: { userId: uid, emoji: parsed.emoji } } },
+        ).exec();
+
+        const removed = (pullRes as any).modifiedCount > 0;
+        let action: "added" | "removed" = "removed";
+        if (!removed) {
+          await MessageModel.updateOne(
+            { _id: mid },
+            { $push: { reactions: { userId: uid, emoji: parsed.emoji, createdAt: now } } },
+          ).exec();
+          action = "added";
+        }
+
+        const members = chat.members.map(String);
+        for (const id of members) {
+          emitToUser(io, id, "chat:reaction", {
+            ok: true,
+            messageId: parsed.messageId,
+            emoji: parsed.emoji,
+            userId,
+            action,
+            at: now.toISOString(),
+          });
+        }
+
+        ack?.({ ok: true, action });
       } catch {
         ack?.({ ok: false });
       }

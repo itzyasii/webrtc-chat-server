@@ -73,6 +73,31 @@ usersRouter.get("/users/search", requireAuth, async (req, res) => {
   });
 });
 
+usersRouter.get("/users/by-ids", requireAuth, async (req, res) => {
+  const idsParam = typeof req.query.ids === "string" ? req.query.ids : "";
+  const ids = idsParam
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => ObjectIdString.safeParse(s).success)
+    .slice(0, 200);
+
+  if (ids.length === 0) return res.json({ ok: true, users: [] });
+
+  const users = await UserModel.find({ _id: { $in: ids } })
+    .select("_id email username lastSeenAt")
+    .lean();
+
+  res.json({
+    ok: true,
+    users: users.map((u) => ({
+      id: String(u._id),
+      email: u.email,
+      username: u.username,
+      lastSeenAt: u.lastSeenAt?.toISOString?.() ?? null,
+    })),
+  });
+});
+
 usersRouter.get("/users/friends", requireAuth, async (req, res) => {
   const me = await UserModel.findById(req.user!.id).select("friends").lean();
   if (!me) return res.status(404).json({ ok: false, error: "NotFound" });

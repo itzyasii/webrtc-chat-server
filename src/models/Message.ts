@@ -18,6 +18,11 @@ export interface MessageDoc extends mongoose.Document {
   clientMessageId?: string;
   text?: string;
   item?: ShareItem;
+  reactions?: {
+    emoji: string;
+    userId: mongoose.Types.ObjectId;
+    createdAt: Date;
+  }[];
   receipts?: {
     userId: mongoose.Types.ObjectId;
     deliveredAt?: Date;
@@ -54,6 +59,15 @@ const ReceiptSchema = new Schema(
   { _id: false },
 );
 
+const ReactionSchema = new Schema(
+  {
+    emoji: { type: String, required: true },
+    userId: { type: Schema.Types.ObjectId, ref: "User", required: true },
+    createdAt: { type: Date, required: true },
+  },
+  { _id: false },
+);
+
 const MessageSchema = new Schema<MessageDoc>(
   {
     chatId: {
@@ -72,6 +86,7 @@ const MessageSchema = new Schema<MessageDoc>(
     clientMessageId: { type: String },
     text: { type: String },
     item: { type: ShareItemSchema },
+    reactions: { type: [ReactionSchema], default: [] },
     receipts: { type: [ReceiptSchema], default: [] },
     editedAt: { type: Date },
     deletedAt: { type: Date },

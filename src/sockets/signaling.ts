@@ -27,6 +27,7 @@ const IceCandidate = z.object({
 const CallOfferSchema = z.object({
   to: ObjectIdString,
   callId: z.string().min(1).optional(),
+  media: z.enum(["audio", "video"]).optional(),
   offer: RtcSessionDescription,
 });
 
@@ -185,6 +186,7 @@ export function registerSignalingHandlers(io: Server, socket: Socket, userId: st
         from: userId,
         to: parsed.data.to,
         callId,
+        media: parsed.data.media ?? "video",
         offer: parsed.data.offer,
       });
 
@@ -333,6 +335,7 @@ export function registerSignalingHandlers(io: Server, socket: Socket, userId: st
           text: messageDoc.text ?? null,
           item: null,
           receipts: messageDoc.receipts ?? [],
+          reactions: messageDoc.reactions ?? [],
           editedAt: messageDoc.editedAt ?? null,
           deletedAt: messageDoc.deletedAt ?? null,
           createdAt: messageDoc.createdAt,
@@ -405,6 +408,7 @@ export function registerSignalingHandlers(io: Server, socket: Socket, userId: st
           text: null,
           item: messageDoc.item,
           receipts: messageDoc.receipts ?? [],
+          reactions: messageDoc.reactions ?? [],
           editedAt: messageDoc.editedAt ?? null,
           deletedAt: messageDoc.deletedAt ?? null,
           createdAt: messageDoc.createdAt,
