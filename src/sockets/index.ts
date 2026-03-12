@@ -47,7 +47,10 @@ export function initSockets(httpServer: HttpServer) {
     addSocketForUser(userId, socket.id);
     logger.info("socket connected", { userId, socketId: socket.id });
 
-    void UserModel.updateOne({ _id: userId }, { $set: { lastSeenAt: new Date() } }).exec();
+    void UserModel.updateOne(
+      { _id: userId },
+      { $set: { lastSeenAt: new Date() } },
+    ).exec();
 
     socket.emit("presence:me", { ok: true, userId });
     socket.emit("presence:online", { ok: true, users: listOnlineUsers() });
@@ -70,7 +73,10 @@ export function initSockets(httpServer: HttpServer) {
         ok: true,
         users: listOnlineUsers(),
       });
-      void UserModel.updateOne({ _id: userId }, { $set: { lastSeenAt: new Date() } }).exec();
+      void UserModel.updateOne(
+        { _id: userId },
+        { $set: { lastSeenAt: new Date() } },
+      ).exec();
     });
   });
 

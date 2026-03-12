@@ -10,8 +10,18 @@ export interface BlockDoc extends mongoose.Document {
 
 const BlockSchema = new Schema<BlockDoc>(
   {
-    blockerId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
-    blockedId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
+    blockerId: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+      index: true,
+    },
+    blockedId: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+      index: true,
+    },
     reason: { type: String },
   },
   { timestamps: true },

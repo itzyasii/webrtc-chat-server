@@ -20,14 +20,27 @@ Health check: `GET /api/health`
 
 Client can connect with `auth: { accessToken: "<jwt>" }` (recommended) or `auth: { userId: "<your-id>" }` (or `?userId=<your-id>`).
 
-Relayed events (server just forwards to the `to` user):
+Signaling events (server forwards to the `to` user and stores call history):
 
 - `call:offer` `{ to, callId?, offer }`
 - `call:answer` `{ to, callId, answer }`
 - `call:ice-candidate` `{ to, callId, candidate }`
 - `call:end` `{ to, callId, reason? }`
-- `chat:message` `{ to, text, conversationId?, messageId? }`
-- `share:item` `{ to, item, conversationId? }` where `item.kind` is `file|image|video|audio`
+Chat events (server persists to MongoDB and emits to both users):
+
+- `chat:message` `{ to, text, clientMessageId? }`
+- `share:item` `{ to, item, clientMessageId? }` where `item.kind` is `file|image|video|audio`
+
+Real-time chat events:
+
+- `chat:typing` `{ chatId, isTyping }` -> forwards to the other member
+- `chat:delivered` `{ messageIds: string[] }`
+- `chat:read` `{ messageIds: string[] }`
+- `chat:receipt` (server -> sender) `{ type: "delivered"|"read", messageIds, userId, chatId, at }`
+
+Call notifications:
+
+- `call:missed` (server -> callee) `{ callId, from, at }`
 
 Presence events:
 
@@ -51,12 +64,28 @@ Users / friends:
 - `POST /api/users/friends/request` `{ toUserId }` (Bearer)
 - `POST /api/users/friends/accept` `{ fromUserId }` (Bearer)
 - `POST /api/users/friends/reject` `{ fromUserId }` (Bearer)
+- `POST /api/users/friends/cancel` `{ toUserId }` (Bearer)
+- `POST /api/users/friends/unfriend` `{ userId }` (Bearer)
 - `GET /api/users/friends` (Bearer)
 - `GET /api/users/friends/requests` (Bearer)
+- `POST /api/users/block` `{ userId, reason? }` (Bearer)
+- `POST /api/users/unblock` `{ userId }` (Bearer)
+- `POST /api/users/report` `{ userId, reason, details? }` (Bearer)
+- `GET /api/users/presence?ids=id1,id2,...` (Bearer)
 
 Chats:
 
 - `GET /api/chats` (Bearer)
 - `POST /api/chats/dm` `{ userId }` (Bearer) -> creates/returns 1:1 chat
-- `GET /api/chats/:chatId/messages?limit=50&before=...` (Bearer)
+- `GET /api/chats/:chatId/messages?limit=50&cursor=<messageId>` (Bearer)
 - `POST /api/chats/:chatId/messages` `{ type: "text", text }` or `{ type: "share", item }` (Bearer)
+- `PATCH /api/chats/:chatId/messages/:messageId` `{ text }` (Bearer)
+- `DELETE /api/chats/:chatId/messages/:messageId` (Bearer)
+
+WebRTC:
+
+- `GET /api/rtc/ice-servers` (Bearer)
+
+Calls:
+
+- `GET /api/calls?limit=50&cursor=<callLogId>&status=missed` (Bearer)

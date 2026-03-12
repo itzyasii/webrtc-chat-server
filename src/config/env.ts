@@ -19,6 +19,10 @@ const EnvSchema = z.object({
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   GOOGLE_REDIRECT_URI: z.string().optional(),
+  STUN_URLS: z.string().default("stun:stun.l.google.com:19302"),
+  TURN_URLS: z.string().optional(),
+  TURN_USERNAME: z.string().optional(),
+  TURN_CREDENTIAL: z.string().optional(),
 });
 
 export const env = EnvSchema.parse(process.env);

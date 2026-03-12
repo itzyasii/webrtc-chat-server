@@ -1,6 +1,12 @@
 import mongoose, { Schema } from "mongoose";
 
-export type CallStatus = "ringing" | "answered" | "ended" | "cancelled" | "declined" | "missed";
+export type CallStatus =
+  | "ringing"
+  | "answered"
+  | "ended"
+  | "cancelled"
+  | "declined"
+  | "missed";
 
 export interface CallLogDoc extends mongoose.Document {
   callId: string;
@@ -19,8 +25,18 @@ export interface CallLogDoc extends mongoose.Document {
 const CallLogSchema = new Schema<CallLogDoc>(
   {
     callId: { type: String, required: true, unique: true, index: true },
-    callerId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
-    calleeId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
+    callerId: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+      index: true,
+    },
+    calleeId: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+      index: true,
+    },
     status: {
       type: String,
       enum: ["ringing", "answered", "ended", "cancelled", "declined", "missed"],
@@ -39,4 +55,7 @@ const CallLogSchema = new Schema<CallLogDoc>(
 CallLogSchema.index({ callerId: 1, offeredAt: -1 });
 CallLogSchema.index({ calleeId: 1, offeredAt: -1 });
 
-export const CallLogModel = mongoose.model<CallLogDoc>("CallLog", CallLogSchema);
+export const CallLogModel = mongoose.model<CallLogDoc>(
+  "CallLog",
+  CallLogSchema,
+);

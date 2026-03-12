@@ -4,10 +4,24 @@ import { requireAuth } from "../middlewares/requireAuth";
 import { validateBody } from "../middlewares/validate";
 import { UserModel } from "../models/User";
 import { listOnlineUsers } from "../sockets/store";
+import { BlockModel } from "../models/Block";
+import { ReportModel } from "../models/Report";
 
 export const usersRouter = Router();
 
 const ObjectIdString = z.string().regex(/^[a-fA-F0-9]{24}$/);
+
+async function isBlockedEitherWay(a: string, b: string) {
+  const existing = await BlockModel.findOne({
+    $or: [
+      { blockerId: a, blockedId: b },
+      { blockerId: b, blockedId: a },
+    ],
+  })
+    .select("_id")
+    .lean();
+  return Boolean(existing);
+}
 
 usersRouter.get("/users/presence", requireAuth, async (req, res) => {
   const idsParam = typeof req.query.ids === "string" ? req.query.ids : "";
@@ -19,7 +33,9 @@ usersRouter.get("/users/presence", requireAuth, async (req, res) => {
 
   if (ids.length === 0) return res.json({ ok: true, presence: [] });
 
-  const users = await UserModel.find({ _id: { $in: ids } }).select("_id lastSeenAt").lean();
+  const users = await UserModel.find({ _id: { $in: ids } })
+    .select("_id lastSeenAt")
+    .lean();
   const lastSeenMap = new Map(users.map((u) => [String(u._id), u.lastSeenAt]));
   const online = new Set(listOnlineUsers());
 
@@ -118,6 +134,8 @@ usersRouter.post(
     const meId = req.user!.id;
     if (toUserId === meId)
       return res.status(400).json({ ok: false, error: "InvalidTarget" });
+    if (await isBlockedEitherWay(meId, toUserId))
+      return res.status(403).json({ ok: false, error: "Blocked" });
 
     const [me, target] = await Promise.all([
       UserModel.findById(meId)
@@ -172,6 +190,8 @@ usersRouter.post(
     const meId = req.user!.id;
     if (fromUserId === meId)
       return res.status(400).json({ ok: false, error: "InvalidTarget" });
+    if (await isBlockedEitherWay(meId, fromUserId))
+      return res.status(403).json({ ok: false, error: "Blocked" });
 
     const me = await UserModel.findById(meId)
       .select("incomingFriendRequests friends")
@@ -225,5 +245,138 @@ usersRouter.post(
     ]);
 
     res.json({ ok: true });
+  },
+);
+
+const CancelSchema = z.object({ toUserId: ObjectIdString });
+
+usersRouter.post(
+  "/users/friends/cancel",
+  requireAuth,
+  validateBody(CancelSchema),
+  async (req, res) => {
+    const { toUserId } = req.body as z.infer<typeof CancelSchema>;
+    const meId = req.user!.id;
+
+    await Promise.all([
+      UserModel.updateOne(
+        { _id: meId },
+        { $pull: { outgoingFriendRequests: toUserId } },
+      ).exec(),
+      UserModel.updateOne(
+        { _id: toUserId },
+        { $pull: { incomingFriendRequests: meId } },
+      ).exec(),
+    ]);
+
+    res.json({ ok: true });
+  },
+);
+
+const UnfriendSchema = z.object({ userId: ObjectIdString });
+
+usersRouter.post(
+  "/users/friends/unfriend",
+  requireAuth,
+  validateBody(UnfriendSchema),
+  async (req, res) => {
+    const { userId } = req.body as z.infer<typeof UnfriendSchema>;
+    const meId = req.user!.id;
+
+    await Promise.all([
+      UserModel.updateOne({ _id: meId }, { $pull: { friends: userId } }).exec(),
+      UserModel.updateOne({ _id: userId }, { $pull: { friends: meId } }).exec(),
+    ]);
+
+    res.json({ ok: true });
+  },
+);
+
+const BlockSchema = z.object({
+  userId: ObjectIdString,
+  reason: z.string().max(500).optional(),
+});
+
+usersRouter.post(
+  "/users/block",
+  requireAuth,
+  validateBody(BlockSchema),
+  async (req, res) => {
+    const { userId, reason } = req.body as z.infer<typeof BlockSchema>;
+    const meId = req.user!.id;
+    if (userId === meId)
+      return res.status(400).json({ ok: false, error: "InvalidTarget" });
+
+    await BlockModel.updateOne(
+      { blockerId: meId, blockedId: userId },
+      { $set: { blockerId: meId, blockedId: userId, reason } },
+      { upsert: true },
+    ).exec();
+
+    await Promise.all([
+      UserModel.updateOne(
+        { _id: meId },
+        {
+          $pull: {
+            friends: userId,
+            outgoingFriendRequests: userId,
+            incomingFriendRequests: userId,
+          },
+        },
+      ).exec(),
+      UserModel.updateOne(
+        { _id: userId },
+        {
+          $pull: {
+            friends: meId,
+            outgoingFriendRequests: meId,
+            incomingFriendRequests: meId,
+          },
+        },
+      ).exec(),
+    ]);
+
+    res.json({ ok: true });
+  },
+);
+
+usersRouter.post(
+  "/users/unblock",
+  requireAuth,
+  validateBody(UnfriendSchema),
+  async (req, res) => {
+    const { userId } = req.body as z.infer<typeof UnfriendSchema>;
+    const meId = req.user!.id;
+    await BlockModel.deleteOne({ blockerId: meId, blockedId: userId }).exec();
+    res.json({ ok: true });
+  },
+);
+
+const ReportSchema = z.object({
+  userId: ObjectIdString,
+  reason: z.string().min(3).max(200),
+  details: z.string().max(2000).optional(),
+});
+
+usersRouter.post(
+  "/users/report",
+  requireAuth,
+  validateBody(ReportSchema),
+  async (req, res) => {
+    const { userId, reason, details } = req.body as z.infer<
+      typeof ReportSchema
+    >;
+    const meId = req.user!.id;
+    if (userId === meId)
+      return res.status(400).json({ ok: false, error: "InvalidTarget" });
+
+    await ReportModel.create({
+      reporterId: meId,
+      targetUserId: userId,
+      reason,
+      details,
+    });
+
+    res.status(201).json({ ok: true });
   },
 );
