@@ -14,7 +14,7 @@ Health check: `GET /api/health`
 ## Uploads
 
 - `POST /api/uploads` with form-data key `file`
-- Uploaded files are served at `GET /uploads/<filename>`
+- Uploaded files are served at `GET /api/uploads/<filename>` (legacy alias: `GET /uploads/<filename>`)
 
 ## Socket.IO (signaling)
 

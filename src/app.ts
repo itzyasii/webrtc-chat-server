@@ -16,6 +16,7 @@ import { notFound } from "./middlewares/notFound";
 
 export function createApp() {
   const app = express();
+  const uploadsDir = path.resolve(process.cwd(), "uploads");
 
   app.disable("x-powered-by");
   app.set("trust proxy", 1);
@@ -48,7 +49,17 @@ export function createApp() {
 
   app.use(cors(corsOptions));
 
-  app.use("/uploads", express.static(path.resolve(process.cwd(), "uploads")));
+  // Serve uploaded chat/media files via API path for frontend convenience.
+  // Keep `/uploads/*` as a legacy alias for older clients.
+  // Helmet defaults may set `Cross-Origin-Resource-Policy: same-origin`, which blocks
+  // embedding images/audio/video from a separate frontend origin. Allow cross-origin
+  // reads for uploaded media assets.
+  const allowCrossOriginResource = (_req: express.Request, res: express.Response, next: express.NextFunction) => {
+    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+    next();
+  };
+  app.use("/api/uploads", allowCrossOriginResource, express.static(uploadsDir));
+  app.use("/uploads", allowCrossOriginResource, express.static(uploadsDir));
   app.use("/api", apiRouter);
 
   app.use(notFound);

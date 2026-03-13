@@ -23,10 +23,16 @@ const upload = multer({
   limits: { fileSize: maxUploadBytes },
 });
 
-function classifyMime(mime: string) {
+function classifyUpload(mime: string, originalName: string) {
   if (mime.startsWith("image/")) return "image";
   if (mime.startsWith("video/")) return "video";
   if (mime.startsWith("audio/")) return "audio";
+
+  const ext = path.extname(originalName).toLowerCase();
+  if ([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".heic", ".heif"].includes(ext)) return "image";
+  if ([".mp4", ".webm", ".mov", ".m4v", ".mkv", ".avi"].includes(ext)) return "video";
+  if ([".mp3", ".wav", ".ogg", ".m4a", ".aac", ".flac", ".opus"].includes(ext)) return "audio";
+
   return "file";
 }
 
@@ -34,13 +40,17 @@ uploadsRouter.post("/uploads", upload.single("file"), (req, res) => {
   const file = req.file;
   if (!file) return res.status(400).json({ ok: false, error: "MissingFile" });
 
-  const urlPath = `/uploads/${file.filename}`;
+  // Prefer serving via `/api/uploads/*` so frontends that proxy `/api` work
+  // without needing a separate static path. Keep a legacy `/uploads/*` alias.
+  const apiUrlPath = `/api/uploads/${file.filename}`;
+  const legacyUrlPath = `/uploads/${file.filename}`;
 
   res.status(201).json({
     ok: true,
     item: {
-      kind: classifyMime(file.mimetype),
-      url: urlPath,
+      kind: classifyUpload(file.mimetype, file.originalname),
+      url: apiUrlPath,
+      legacyUrl: legacyUrlPath,
       filename: file.filename,
       originalName: file.originalname,
       mime: file.mimetype,
