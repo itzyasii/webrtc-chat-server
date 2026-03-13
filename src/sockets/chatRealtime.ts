@@ -333,6 +333,7 @@ export function registerChatRealtimeHandlers(
         for (const id of members) {
           emitToUser(io, id, "chat:reaction", {
             ok: true,
+            chatId: String(msg.chatId),
             messageId: parsed.data.messageId,
             emoji: parsed.data.emoji,
             userId,
