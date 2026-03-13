@@ -51,13 +51,13 @@ export function registerChatRealtimeHandlers(
         const other = chat.members.map(String).find((m) => m !== userId);
         if (!other) return ack?.({ ok: false });
 
-        emitToUser(io, other, "chat:typing", {
+        const emitted = emitToUser(io, other, "chat:typing", {
           ok: true,
           chatId: parsed.chatId,
           from: userId,
           isTyping: parsed.isTyping,
         });
-        ack?.({ ok: true });
+        ack?.({ ok: emitted });
       } catch {
         ack?.({ ok: false });
       }
@@ -168,25 +168,26 @@ export function registerChatRealtimeHandlers(
     "chat:react",
     async (
       data: unknown,
-      ack?: (res: { ok: boolean; action?: "added" | "removed" }) => void,
+      ack?: (res: { ok: boolean; action?: "added" | "removed"; error?: string }) => void,
     ) => {
       try {
-        const parsed = ReactionSchema.parse(data);
+        const parsed = ReactionSchema.safeParse(data);
+        if (!parsed.success) return ack?.({ ok: false, error: "InvalidPayload" });
         const uid = new mongoose.Types.ObjectId(userId);
-        const mid = new mongoose.Types.ObjectId(parsed.messageId);
+        const mid = new mongoose.Types.ObjectId(parsed.data.messageId);
         const now = new Date();
 
         const msg = await MessageModel.findById(mid).select("chatId").lean();
-        if (!msg) return ack?.({ ok: false });
+        if (!msg) return ack?.({ ok: false, error: "MessageNotFound" });
 
         const chat = await ChatModel.findOne({ _id: msg.chatId, members: userId })
           .select("members")
           .lean();
-        if (!chat || chat.members.length !== 2) return ack?.({ ok: false });
+        if (!chat || chat.members.length !== 2) return ack?.({ ok: false, error: "Forbidden" });
 
         const pullRes = await MessageModel.updateOne(
           { _id: mid },
-          { $pull: { reactions: { userId: uid, emoji: parsed.emoji } } },
+          { $pull: { reactions: { userId: uid, emoji: parsed.data.emoji } } },
         ).exec();
 
         const removed = (pullRes as any).modifiedCount > 0;
@@ -194,7 +195,7 @@ export function registerChatRealtimeHandlers(
         if (!removed) {
           await MessageModel.updateOne(
             { _id: mid },
-            { $push: { reactions: { userId: uid, emoji: parsed.emoji, createdAt: now } } },
+            { $push: { reactions: { userId: uid, emoji: parsed.data.emoji, createdAt: now } } },
           ).exec();
           action = "added";
         }
@@ -203,8 +204,8 @@ export function registerChatRealtimeHandlers(
         for (const id of members) {
           emitToUser(io, id, "chat:reaction", {
             ok: true,
-            messageId: parsed.messageId,
-            emoji: parsed.emoji,
+            messageId: parsed.data.messageId,
+            emoji: parsed.data.emoji,
             userId,
             action,
             at: now.toISOString(),
@@ -213,7 +214,7 @@ export function registerChatRealtimeHandlers(
 
         ack?.({ ok: true, action });
       } catch {
-        ack?.({ ok: false });
+        ack?.({ ok: false, error: "ServerError" });
       }
     },
   );
