@@ -168,11 +168,16 @@ export function registerChatRealtimeHandlers(
     "chat:react",
     async (
       data: unknown,
-      ack?: (res: { ok: boolean; action?: "added" | "removed"; error?: string }) => void,
+      ack?: (res: {
+        ok: boolean;
+        action?: "added" | "removed";
+        error?: string;
+      }) => void,
     ) => {
       try {
         const parsed = ReactionSchema.safeParse(data);
-        if (!parsed.success) return ack?.({ ok: false, error: "InvalidPayload" });
+        if (!parsed.success)
+          return ack?.({ ok: false, error: "InvalidPayload" });
         const uid = new mongoose.Types.ObjectId(userId);
         const mid = new mongoose.Types.ObjectId(parsed.data.messageId);
         const now = new Date();
@@ -180,24 +185,50 @@ export function registerChatRealtimeHandlers(
         const msg = await MessageModel.findById(mid).select("chatId").lean();
         if (!msg) return ack?.({ ok: false, error: "MessageNotFound" });
 
-        const chat = await ChatModel.findOne({ _id: msg.chatId, members: userId })
+        const chat = await ChatModel.findOne({
+          _id: msg.chatId,
+          members: userId,
+        })
           .select("members")
           .lean();
-        if (!chat || chat.members.length !== 2) return ack?.({ ok: false, error: "Forbidden" });
+        if (!chat || chat.members.length !== 2)
+          return ack?.({ ok: false, error: "Forbidden" });
 
-        const pullRes = await MessageModel.updateOne(
-          { _id: mid },
-          { $pull: { reactions: { userId: uid, emoji: parsed.data.emoji } } },
-        ).exec();
+        const removeQuery = {
+          _id: mid,
+          reactions: {
+            $elemMatch: { userId: uid, emoji: parsed.data.emoji },
+          },
+        };
 
-        const removed = (pullRes as any).modifiedCount > 0;
+        const pullRes = await MessageModel.updateOne(removeQuery, {
+          $pull: { reactions: { userId: uid, emoji: parsed.data.emoji } },
+        }).exec();
+
+        const removed = pullRes.matchedCount > 0;
         let action: "added" | "removed" = "removed";
         if (!removed) {
-          await MessageModel.updateOne(
-            { _id: mid },
-            { $push: { reactions: { userId: uid, emoji: parsed.data.emoji, createdAt: now } } },
+          const pushRes = await MessageModel.updateOne(
+            {
+              _id: mid,
+              reactions: {
+                $not: {
+                  $elemMatch: { userId: uid, emoji: parsed.data.emoji },
+                },
+              },
+            },
+            {
+              $push: {
+                reactions: {
+                  userId: uid,
+                  emoji: parsed.data.emoji,
+                  createdAt: now,
+                },
+              },
+            },
           ).exec();
-          action = "added";
+
+          action = pushRes.modifiedCount > 0 ? "added" : "removed";
         }
 
         const members = chat.members.map(String);
