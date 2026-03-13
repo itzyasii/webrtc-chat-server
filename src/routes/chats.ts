@@ -7,6 +7,7 @@ import { BlockModel } from "../models/Block";
 import { ChatModel } from "../models/Chat";
 import { MessageModel } from "../models/Message";
 import { UserModel } from "../models/User";
+import { buildReactionUserMap, serializeReactions } from "../lib/messageReactions";
 import { broadcastToUsers } from "../sockets/chatBroadcast";
 
 export const chatsRouter = Router();
@@ -205,6 +206,7 @@ chatsRouter.get("/chats/:chatId/messages", requireAuth, async (req, res) => {
   const hasMore = messagesDesc.length > limit;
   const page = hasMore ? messagesDesc.slice(0, limit) : messagesDesc;
   const nextCursor = hasMore ? String(page[page.length - 1]!._id) : null;
+  const reactionUserMap = await buildReactionUserMap(page as any[]);
 
   res.json({
     ok: true,
@@ -222,7 +224,7 @@ chatsRouter.get("/chats/:chatId/messages", requireAuth, async (req, res) => {
         item: m.deletedAt ? null : m.item ?? null,
         event: (m as any).event ?? null,
         receipts: m.receipts ?? [],
-        reactions: (m as any).reactions ?? [],
+        reactions: serializeReactions((m as any).reactions, reactionUserMap),
         editedAt: m.editedAt ?? null,
         deletedAt: m.deletedAt ?? null,
         createdAt: m.createdAt,
@@ -298,7 +300,7 @@ chatsRouter.post(
               text: message.text ?? null,
               item: null,
               receipts: message.receipts ?? [],
-              reactions: (message as any).reactions ?? [],
+              reactions: serializeReactions((message as any).reactions, new Map()),
               editedAt: message.editedAt ?? null,
               deletedAt: message.deletedAt ?? null,
               createdAt: message.createdAt,
@@ -316,7 +318,7 @@ chatsRouter.post(
               text: null,
               item: message.item ?? null,
               receipts: message.receipts ?? [],
-              reactions: (message as any).reactions ?? [],
+              reactions: serializeReactions((message as any).reactions, new Map()),
               editedAt: message.editedAt ?? null,
               deletedAt: message.deletedAt ?? null,
               createdAt: message.createdAt,
@@ -335,7 +337,7 @@ chatsRouter.post(
         text: message.text,
         item: message.item,
         receipts: message.receipts ?? [],
-        reactions: (message as any).reactions ?? [],
+        reactions: serializeReactions((message as any).reactions, new Map()),
         editedAt: message.editedAt ?? null,
         deletedAt: message.deletedAt ?? null,
         createdAt: message.createdAt,
@@ -408,7 +410,7 @@ chatsRouter.delete("/chats/:chatId/messages/:messageId", requireAuth, async (req
 
   await MessageModel.updateOne(
     { _id: messageId },
-    { $set: { deletedAt: new Date() }, $unset: { text: 1, item: 1 } },
+    { $set: { deletedAt: new Date() }, $unset: { text: 1, item: 1, reactions: 1 } },
   ).exec();
 
   const chat = await ChatModel.findOne({ _id: chatId, members: req.user!.id }).select("members").lean();

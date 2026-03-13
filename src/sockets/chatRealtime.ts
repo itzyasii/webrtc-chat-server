@@ -231,6 +231,10 @@ export function registerChatRealtimeHandlers(
           action = pushRes.modifiedCount > 0 ? "added" : "removed";
         }
 
+        const reactionUser = await UserModel.findById(userId)
+          .select("_id username email")
+          .lean();
+
         const members = chat.members.map(String);
         for (const id of members) {
           emitToUser(io, id, "chat:reaction", {
@@ -238,6 +242,13 @@ export function registerChatRealtimeHandlers(
             messageId: parsed.data.messageId,
             emoji: parsed.data.emoji,
             userId,
+            user: reactionUser
+              ? {
+                  id: String(reactionUser._id),
+                  username: reactionUser.username,
+                  email: reactionUser.email,
+                }
+              : { id: userId },
             action,
             at: now.toISOString(),
           });
