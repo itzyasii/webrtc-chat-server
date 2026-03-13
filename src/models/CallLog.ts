@@ -12,6 +12,7 @@ export interface CallLogDoc extends mongoose.Document {
   callId: string;
   callerId: mongoose.Types.ObjectId;
   calleeId: mongoose.Types.ObjectId;
+  media?: "audio" | "video";
   status: CallStatus;
   offeredAt: Date;
   answeredAt?: Date;
@@ -37,6 +38,7 @@ const CallLogSchema = new Schema<CallLogDoc>(
       required: true,
       index: true,
     },
+    media: { type: String, enum: ["audio", "video"] },
     status: {
       type: String,
       enum: ["ringing", "answered", "ended", "cancelled", "declined", "missed"],

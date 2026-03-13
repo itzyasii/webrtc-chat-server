@@ -150,6 +150,10 @@ function scheduleMissedCall(io: Server, callId: string, callerId: string, callee
   ringTimers.set(callId, t);
 }
 
+function callMediaFromValue(v: unknown): "audio" | "video" {
+  return v === "audio" || v === "video" ? v : "video";
+}
+
 export function registerSignalingHandlers(io: Server, socket: Socket, userId: string) {
   socket.on(
     "presence:list",
@@ -167,6 +171,7 @@ export function registerSignalingHandlers(io: Server, socket: Socket, userId: st
 
       const callId = parsed.data.callId ?? nanoid(16);
       const now = new Date();
+      const media = callMediaFromValue(parsed.data.media);
 
       await CallLogModel.updateOne(
         { callId },
@@ -175,6 +180,7 @@ export function registerSignalingHandlers(io: Server, socket: Socket, userId: st
             callId,
             callerId: new mongoose.Types.ObjectId(userId),
             calleeId: new mongoose.Types.ObjectId(parsed.data.to),
+            media,
             status: "ringing",
             offeredAt: now,
           },
@@ -186,7 +192,7 @@ export function registerSignalingHandlers(io: Server, socket: Socket, userId: st
         from: userId,
         to: parsed.data.to,
         callId,
-        media: parsed.data.media ?? "video",
+        media,
         offer: parsed.data.offer,
       });
 
@@ -201,11 +207,73 @@ export function registerSignalingHandlers(io: Server, socket: Socket, userId: st
       const parsed = CallAnswerSchema.safeParse(data);
       if (!parsed.success) return ack?.({ ok: false });
 
+      const log = await CallLogModel.findOne({ callId: parsed.data.callId })
+        .select("callerId calleeId media answeredAt endedAt")
+        .lean();
+      if (!log) return ack?.({ ok: false });
+      if (String(log.callerId) !== parsed.data.to) return ack?.({ ok: false });
+      if (String(log.calleeId) !== userId) return ack?.({ ok: false });
+      if (log.endedAt) return ack?.({ ok: false });
+
       clearRingTimer(parsed.data.callId);
+      const answeredAt = new Date();
       await CallLogModel.updateOne(
         { callId: parsed.data.callId },
-        { $set: { status: "answered", answeredAt: new Date() } },
+        { $set: { status: "answered", answeredAt } },
       ).exec();
+
+      try {
+        const media = callMediaFromValue(log.media);
+        const chat = await getOrCreateDmChat(userId, parsed.data.to);
+        const msg = await MessageModel.create({
+          chatId: chat._id,
+          from: userId,
+          type: "event",
+          event: {
+            kind: "call_started",
+            callId: parsed.data.callId,
+            media,
+            by: new mongoose.Types.ObjectId(userId),
+          },
+          receipts: [],
+          reactions: [],
+        });
+
+        await ChatModel.updateOne(
+          { _id: chat._id },
+          { $set: { updatedAt: answeredAt } },
+        ).exec();
+
+        const payload = {
+          ok: true,
+          chatId: String(chat._id),
+          message: {
+            id: String(msg._id),
+            chatId: String(chat._id),
+            from: userId,
+            type: "event" as const,
+            clientMessageId: null,
+            text: null,
+            item: null,
+            event: {
+              kind: "call_started" as const,
+              callId: parsed.data.callId,
+              media,
+              by: userId,
+            },
+            receipts: [],
+            reactions: [],
+            editedAt: null,
+            deletedAt: null,
+            createdAt: msg.createdAt,
+          },
+        };
+
+        emitToUser(io, userId, "chat:message", payload);
+        emitToUser(io, parsed.data.to, "chat:message", payload);
+      } catch {
+        // ignore: call event messages are best-effort
+      }
 
       const ok = emitToUser(io, parsed.data.to, "call:answer", {
         from: userId,
@@ -240,6 +308,14 @@ export function registerSignalingHandlers(io: Server, socket: Socket, userId: st
       }).lean();
       const now = new Date();
 
+      if (!existing) return ack?.({ ok: false });
+      const callerId = String(existing.callerId);
+      const calleeId = String(existing.calleeId);
+      const otherOk =
+        (userId === callerId && parsed.data.to === calleeId) ||
+        (userId === calleeId && parsed.data.to === callerId);
+      if (!otherOk) return ack?.({ ok: false });
+
       if (existing) {
         const wasAnswered = Boolean(existing.answeredAt);
         const status = wasAnswered
@@ -261,6 +337,69 @@ export function registerSignalingHandlers(io: Server, socket: Socket, userId: st
             },
           },
         ).exec();
+
+        if (wasAnswered && !existing.endedAt) {
+          try {
+            const otherUserId = userId === callerId ? calleeId : callerId;
+            const chat = await getOrCreateDmChat(callerId, calleeId);
+            const media = callMediaFromValue((existing as any).media);
+            const durationMs =
+              existing.answeredAt instanceof Date
+                ? Math.max(0, now.getTime() - existing.answeredAt.getTime())
+                : undefined;
+
+            const msg = await MessageModel.create({
+              chatId: chat._id,
+              from: userId,
+              type: "event",
+              event: {
+                kind: "call_ended",
+                callId: parsed.data.callId,
+                media,
+                by: new mongoose.Types.ObjectId(userId),
+                durationMs,
+              },
+              receipts: [],
+              reactions: [],
+            });
+
+            await ChatModel.updateOne(
+              { _id: chat._id },
+              { $set: { updatedAt: now } },
+            ).exec();
+
+            const payload = {
+              ok: true,
+              chatId: String(chat._id),
+              message: {
+                id: String(msg._id),
+                chatId: String(chat._id),
+                from: userId,
+                type: "event" as const,
+                clientMessageId: null,
+                text: null,
+                item: null,
+                event: {
+                  kind: "call_ended" as const,
+                  callId: parsed.data.callId,
+                  media,
+                  by: userId,
+                  durationMs,
+                },
+                receipts: [],
+                reactions: [],
+                editedAt: null,
+                deletedAt: null,
+                createdAt: msg.createdAt,
+              },
+            };
+
+            emitToUser(io, userId, "chat:message", payload);
+            emitToUser(io, otherUserId, "chat:message", payload);
+          } catch {
+            // ignore
+          }
+        }
 
         if (!wasAnswered && status === "missed") {
           emitToUser(io, String(existing.calleeId), "call:missed", {

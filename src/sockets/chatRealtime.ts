@@ -19,7 +19,8 @@ const ReceiptSchema = z.object({
 
 const ReactionSchema = z.object({
   messageId: ObjectIdString,
-  emoji: z.string().min(1).max(16),
+  // Emojis can be multi-codepoint (skin tones/ZWJ sequences), so keep this lenient.
+  emoji: z.string().min(1).max(64),
 });
 
 export function registerChatRealtimeHandlers(

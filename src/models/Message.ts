@@ -1,6 +1,16 @@
 import mongoose, { Schema } from "mongoose";
 
-export type MessageType = "text" | "share";
+export type MessageType = "text" | "share" | "event";
+
+export type EventKind = "call_started" | "call_ended";
+
+export interface EventItem {
+  kind: EventKind;
+  callId: string;
+  media: "audio" | "video";
+  by: mongoose.Types.ObjectId;
+  durationMs?: number;
+}
 
 export interface ShareItem {
   kind: "file" | "image" | "video" | "audio";
@@ -18,6 +28,7 @@ export interface MessageDoc extends mongoose.Document {
   clientMessageId?: string;
   text?: string;
   item?: ShareItem;
+  event?: EventItem;
   reactions?: {
     emoji: string;
     userId: mongoose.Types.ObjectId;
@@ -46,6 +57,17 @@ const ShareItemSchema = new Schema<ShareItem>(
     mime: { type: String },
     size: { type: Number },
     meta: { type: Schema.Types.Mixed },
+  },
+  { _id: false },
+);
+
+const EventSchema = new Schema<EventItem>(
+  {
+    kind: { type: String, enum: ["call_started", "call_ended"], required: true },
+    callId: { type: String, required: true },
+    media: { type: String, enum: ["audio", "video"], required: true },
+    by: { type: Schema.Types.ObjectId, ref: "User", required: true },
+    durationMs: { type: Number },
   },
   { _id: false },
 );
@@ -82,10 +104,11 @@ const MessageSchema = new Schema<MessageDoc>(
       required: true,
       index: true,
     },
-    type: { type: String, enum: ["text", "share"], required: true },
+    type: { type: String, enum: ["text", "share", "event"], required: true },
     clientMessageId: { type: String },
     text: { type: String },
     item: { type: ShareItemSchema },
+    event: { type: EventSchema },
     reactions: { type: [ReactionSchema], default: [] },
     receipts: { type: [ReceiptSchema], default: [] },
     editedAt: { type: Date },

@@ -31,6 +31,33 @@ chatsRouter.get("/chats", requireAuth, async (req, res) => {
     .sort({ updatedAt: -1 })
     .lean();
 
+  const chatIds = chats.map((c) => c._id);
+  const lastMessages = chatIds.length
+    ? await MessageModel.aggregate([
+        { $match: { chatId: { $in: chatIds }, deletedAt: { $exists: false } } },
+        { $sort: { createdAt: -1, _id: -1 } },
+        {
+          $group: {
+            _id: "$chatId",
+            message: {
+              $first: {
+                _id: "$_id",
+                type: "$type",
+                text: "$text",
+                item: "$item",
+                event: "$event",
+                createdAt: "$createdAt",
+                from: "$from",
+              },
+            },
+          },
+        },
+      ]).exec()
+    : [];
+  const lastByChatId = new Map<string, any>(
+    lastMessages.map((x: any) => [String(x._id), x.message]),
+  );
+
   const memberIds = Array.from(
     new Set(chats.flatMap((c) => c.members.map((id) => String(id)))),
   );
@@ -52,9 +79,59 @@ chatsRouter.get("/chats", requireAuth, async (req, res) => {
       members: c.members.map(
         (id) => memberMap.get(String(id)) ?? { id: String(id) },
       ),
+      lastMessage: (() => {
+        const m = lastByChatId.get(String(c._id));
+        if (!m) return null;
+        return {
+          id: String(m._id),
+          type: m.type,
+          text: m.text ?? null,
+          itemKind: m.item?.kind ?? null,
+          eventKind: m.event?.kind ?? null,
+          eventMedia: m.event?.media ?? null,
+          from: String(m.from),
+          createdAt: m.createdAt,
+        };
+      })(),
       updatedAt: c.updatedAt,
       createdAt: c.createdAt,
     })),
+  });
+});
+
+chatsRouter.get("/chats/:chatId", requireAuth, async (req, res) => {
+  const { chatId } = req.params;
+  if (!ObjectIdString.safeParse(chatId).success)
+    return res.status(400).json({ ok: false, error: "InvalidChatId" });
+
+  const chat = await ChatModel.findOne({
+    _id: chatId,
+    members: req.user!.id,
+  }).lean();
+  if (!chat) return res.status(404).json({ ok: false, error: "NotFound" });
+
+  const memberIds = chat.members.map((id) => String(id));
+  const members = await UserModel.find({ _id: { $in: memberIds } })
+    .select("_id email username")
+    .lean();
+  const memberMap = new Map(
+    members.map((m) => [
+      String(m._id),
+      { id: String(m._id), email: m.email, username: m.username },
+    ]),
+  );
+
+  res.json({
+    ok: true,
+    chat: {
+      id: String(chat._id),
+      type: chat.type,
+      members: chat.members.map(
+        (id) => memberMap.get(String(id)) ?? { id: String(id) },
+      ),
+      updatedAt: chat.updatedAt,
+      createdAt: chat.createdAt,
+    },
   });
 });
 
@@ -143,6 +220,7 @@ chatsRouter.get("/chats/:chatId/messages", requireAuth, async (req, res) => {
         clientMessageId: m.clientMessageId ?? null,
         text: m.deletedAt ? null : m.text ?? null,
         item: m.deletedAt ? null : m.item ?? null,
+        event: (m as any).event ?? null,
         receipts: m.receipts ?? [],
         reactions: (m as any).reactions ?? [],
         editedAt: m.editedAt ?? null,
