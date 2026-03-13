@@ -33,7 +33,7 @@ export function createApp() {
   app.use(
     rateLimit({
       windowMs: 15 * 60 * 1000,
-      limit: 300,
+      limit: 100000,
       standardHeaders: true,
       legacyHeaders: false,
     }),
@@ -54,7 +54,11 @@ export function createApp() {
   // Helmet defaults may set `Cross-Origin-Resource-Policy: same-origin`, which blocks
   // embedding images/audio/video from a separate frontend origin. Allow cross-origin
   // reads for uploaded media assets.
-  const allowCrossOriginResource = (_req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const allowCrossOriginResource = (
+    _req: express.Request,
+    res: express.Response,
+    next: express.NextFunction,
+  ) => {
     res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
     next();
   };
