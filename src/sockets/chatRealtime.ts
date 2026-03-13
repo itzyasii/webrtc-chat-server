@@ -171,6 +171,11 @@ export function registerChatRealtimeHandlers(
       ack?: (res: {
         ok: boolean;
         action?: "added" | "removed";
+        user?: {
+          id: string;
+          username?: string;
+          email?: string;
+        };
         error?: string;
       }) => void,
     ) => {
@@ -254,7 +259,17 @@ export function registerChatRealtimeHandlers(
           });
         }
 
-        ack?.({ ok: true, action });
+        ack?.({
+          ok: true,
+          action,
+          user: reactionUser
+            ? {
+                id: String(reactionUser._id),
+                username: reactionUser.username,
+                email: reactionUser.email,
+              }
+            : { id: userId },
+        });
       } catch {
         ack?.({ ok: false, error: "ServerError" });
       }
