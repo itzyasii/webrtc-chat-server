@@ -5,7 +5,7 @@ import { corsOriginList } from "../config/env";
 import { logger } from "../config/logger";
 import { verifyAccessToken } from "../auth/tokens";
 import { registerSignalingHandlers } from "./signaling";
-import { registerChatRealtimeHandlers } from "./chatRealtime";
+import { deliverPendingMessages, registerChatRealtimeHandlers } from "./chatRealtime";
 import { addSocketForUser, listOnlineUsers, removeSocket } from "./store";
 import { UserModel } from "../models/User";
 import { setIo } from "./runtime";
@@ -61,6 +61,8 @@ export function initSockets(httpServer: HttpServer) {
       ok: true,
       users: listOnlineUsers(),
     });
+
+    void deliverPendingMessages(io, userId);
 
     registerSignalingHandlers(io, socket, userId);
     registerChatRealtimeHandlers(io, socket, userId);

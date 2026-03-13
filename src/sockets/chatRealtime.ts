@@ -17,6 +17,10 @@ const ReceiptSchema = z.object({
   messageIds: z.array(ObjectIdString).min(1).max(200),
 });
 
+const VoiceListenedSchema = z.object({
+  messageId: ObjectIdString,
+});
+
 const ReactionSchema = z.object({
   messageId: ObjectIdString,
   // Emojis can be multi-codepoint (skin tones/ZWJ sequences), so keep this lenient.
@@ -165,6 +169,91 @@ export function registerChatRealtimeHandlers(
   );
 
   socket.on(
+    "chat:voice:listened",
+    async (data: unknown, ack?: (res: { ok: boolean; error?: string }) => void) => {
+      try {
+        const parsed = VoiceListenedSchema.safeParse(data);
+        if (!parsed.success) return ack?.({ ok: false, error: "InvalidPayload" });
+
+        const uid = new mongoose.Types.ObjectId(userId);
+        const now = new Date();
+        const message = await MessageModel.findById(parsed.data.messageId)
+          .select("chatId from type item deletedAt")
+          .lean();
+        if (!message || message.deletedAt)
+          return ack?.({ ok: false, error: "MessageNotFound" });
+        if (String(message.from) === userId)
+          return ack?.({ ok: false, error: "OwnMessage" });
+        if (message.type !== "share" || message.item?.kind !== "audio")
+          return ack?.({ ok: false, error: "NotVoiceMessage" });
+
+        const chat = await ChatModel.findOne({
+          _id: message.chatId,
+          members: userId,
+        })
+          .select("members")
+          .lean();
+        if (!chat || chat.members.length !== 2)
+          return ack?.({ ok: false, error: "Forbidden" });
+
+        const updateExisting = await MessageModel.updateOne(
+          {
+            _id: message._id,
+            receipts: { $elemMatch: { userId: uid, listenedAt: { $exists: false } } },
+          },
+          {
+            $set: {
+              "receipts.$.deliveredAt": now,
+              "receipts.$.readAt": now,
+              "receipts.$.listenedAt": now,
+            },
+          },
+        ).exec();
+
+        if (updateExisting.modifiedCount === 0) {
+          await MessageModel.updateOne(
+            {
+              _id: message._id,
+              receipts: { $not: { $elemMatch: { userId: uid } } },
+            },
+            {
+              $push: {
+                receipts: {
+                  userId: uid,
+                  deliveredAt: now,
+                  readAt: now,
+                  listenedAt: now,
+                },
+              },
+            },
+          ).exec();
+        }
+
+        emitToUser(io, String(message.from), "chat:voice:listened", {
+          ok: true,
+          chatId: String(message.chatId),
+          messageId: parsed.data.messageId,
+          userId,
+          at: now.toISOString(),
+        });
+
+        emitToUser(io, String(message.from), "chat:receipt", {
+          ok: true,
+          type: "read",
+          chatId: String(message.chatId),
+          messageIds: [parsed.data.messageId],
+          userId,
+          at: now.toISOString(),
+        });
+
+        ack?.({ ok: true });
+      } catch {
+        ack?.({ ok: false, error: "ServerError" });
+      }
+    },
+  );
+
+  socket.on(
     "chat:react",
     async (
       data: unknown,
@@ -275,4 +364,78 @@ export function registerChatRealtimeHandlers(
       }
     },
   );
+}
+
+export async function deliverPendingMessages(io: Server, userId: string) {
+  const uid = new mongoose.Types.ObjectId(userId);
+  const pending = await MessageModel.find({
+    from: { $ne: uid },
+    deletedAt: { $exists: false },
+    $or: [
+      { receipts: { $not: { $elemMatch: { userId: uid } } } },
+      { receipts: { $elemMatch: { userId: uid, deliveredAt: { $exists: false } } } },
+    ],
+  })
+    .select("_id chatId from")
+    .lean();
+
+  if (!pending.length) return;
+
+  const chatIds = Array.from(new Set(pending.map((message) => String(message.chatId))));
+  const chats = await ChatModel.find({
+    _id: { $in: chatIds },
+    members: userId,
+  })
+    .select("_id")
+    .lean();
+  const allowedChatIds = new Set(chats.map((chat) => String(chat._id)));
+  const messages = pending.filter((message) => allowedChatIds.has(String(message.chatId)));
+  if (!messages.length) return;
+
+  const ids = messages.map((message) => new mongoose.Types.ObjectId(String(message._id)));
+  const now = new Date();
+
+  await MessageModel.updateMany(
+    {
+      _id: { $in: ids },
+      receipts: { $elemMatch: { userId: uid, deliveredAt: { $exists: false } } },
+    },
+    { $set: { "receipts.$.deliveredAt": now } },
+  ).exec();
+
+  await MessageModel.updateMany(
+    {
+      _id: { $in: ids },
+      receipts: { $not: { $elemMatch: { userId: uid } } },
+    },
+    { $push: { receipts: { userId: uid, deliveredAt: now } } },
+  ).exec();
+
+  const grouped = new Map<string, { fromId: string; chatId: string; messageIds: string[] }>();
+  for (const message of messages) {
+    const fromId = String(message.from);
+    const chatId = String(message.chatId);
+    const key = `${fromId}:${chatId}`;
+    const current = grouped.get(key);
+    if (current) {
+      current.messageIds.push(String(message._id));
+      continue;
+    }
+    grouped.set(key, {
+      fromId,
+      chatId,
+      messageIds: [String(message._id)],
+    });
+  }
+
+  for (const receipt of grouped.values()) {
+    emitToUser(io, receipt.fromId, "chat:receipt", {
+      ok: true,
+      type: "delivered",
+      messageIds: receipt.messageIds,
+      userId,
+      chatId: receipt.chatId,
+      at: now.toISOString(),
+    });
+  }
 }

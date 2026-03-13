@@ -38,6 +38,7 @@ export interface MessageDoc extends mongoose.Document {
     userId: mongoose.Types.ObjectId;
     deliveredAt?: Date;
     readAt?: Date;
+    listenedAt?: Date;
   }[];
   editedAt?: Date;
   deletedAt?: Date;
@@ -77,6 +78,7 @@ const ReceiptSchema = new Schema(
     userId: { type: Schema.Types.ObjectId, ref: "User", required: true },
     deliveredAt: { type: Date },
     readAt: { type: Date },
+    listenedAt: { type: Date },
   },
   { _id: false },
 );

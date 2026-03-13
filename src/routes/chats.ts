@@ -9,6 +9,7 @@ import { MessageModel } from "../models/Message";
 import { UserModel } from "../models/User";
 import { buildReactionUserMap, serializeReactions } from "../lib/messageReactions";
 import { broadcastToUsers } from "../sockets/chatBroadcast";
+import { deleteUploadedFileByUrl } from "../lib/uploads";
 
 export const chatsRouter = Router();
 
@@ -403,7 +404,9 @@ chatsRouter.delete("/chats/:chatId/messages/:messageId", requireAuth, async (req
     return res.status(400).json({ ok: false, error: "InvalidId" });
   }
 
-  const msg = await MessageModel.findOne({ _id: messageId, chatId }).select("from deletedAt").lean();
+  const msg = await MessageModel.findOne({ _id: messageId, chatId })
+    .select("from deletedAt item")
+    .lean();
   if (!msg) return res.status(404).json({ ok: false, error: "NotFound" });
   if (String(msg.from) !== req.user!.id) return res.status(403).json({ ok: false, error: "Forbidden" });
   if (msg.deletedAt) return res.json({ ok: true });
@@ -412,6 +415,9 @@ chatsRouter.delete("/chats/:chatId/messages/:messageId", requireAuth, async (req
     { _id: messageId },
     { $set: { deletedAt: new Date() }, $unset: { text: 1, item: 1, reactions: 1 } },
   ).exec();
+
+  await deleteUploadedFileByUrl(msg.item?.url);
+  await deleteUploadedFileByUrl((msg.item as any)?.legacyUrl);
 
   const chat = await ChatModel.findOne({ _id: chatId, members: req.user!.id }).select("members").lean();
   if (chat) {
